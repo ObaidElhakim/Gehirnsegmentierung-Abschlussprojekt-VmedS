@@ -4,119 +4,101 @@ import matplotlib.pyplot as plt
 from scipy.ndimage import binary_fill_holes, label
 
 # -------------------------------------------------------------------------
-# Funktion: Brain-Maske für einen Slice erstellen (Relative Threshold)
+# Funktion: Brain-Maske für einen Slice erstellen (UNVERÄNDERT)
 # -------------------------------------------------------------------------
 def get_brain_mask(slice_img, threshold=0.05):
     """
     Erstellt eine binäre Maske für das Gehirn aus einem 2D-Slice.
-    
-    Parameters:
-        slice_img : 2D numpy array
-            Einzelner Slice des MRI
-        threshold : float
-            Bruchteil des Maximalwerts, der als Gehirngewebe gilt
-    
-    Returns:
-        brain_mask_clean : 2D boolean array
-            Maske, True = Gehirn, False = Hintergrund
     """
-    # 1. Schwellenwert
     thresh_val = threshold * np.max(slice_img)
     mask = slice_img > thresh_val
-
-    # 2. Löcher füllen
     mask_filled = binary_fill_holes(mask)
-
-    # 3. Größte zusammenhängende Komponente behalten
     labels, num = label(mask_filled)
+    if num == 0: return np.zeros_like(slice_img, dtype=bool)
     sizes = np.bincount(labels.ravel())
-    sizes[0] = 0  # Hintergrund ignorieren
+    sizes[0] = 0  
     largest_label = sizes.argmax()
     brain_mask_clean = labels == largest_label
-
     return brain_mask_clean
 
 # -------------------------------------------------------------------------
-# Funktion: MRI Slice laden (korrekte Orientierung)
+# Funktion: MRI Slice laden (UNVERÄNDERT)
 # -------------------------------------------------------------------------
 def load_slice_corrected(path, name):
     """
     Lädt ein MRI, extrahiert den mittleren Slice und korrigiert die Orientierung.
-    
-    Returns:
-        slice_img : 2D numpy array
     """
     print(f"\n--- Lade {name} ---")
     img = np.asarray(nib.load(path).dataobj)
-    print(f"{name} Original Form:", img.shape)
-
-    # Mittleren Slice auswählen (Z-Achse)
     z_idx = img.shape[2] // 2
     slice_img = img[:, :, z_idx].astype(float)
-
-    # Transpose für korrekte X/Y-Darstellung in Matplotlib
     slice_img = np.transpose(slice_img)
-
-    # Flip vertikal + horizontal, damit Gehirn korrekt oben ist
     slice_img = np.flipud(slice_img)
     slice_img = np.fliplr(slice_img)
-
     return slice_img
 
 # -------------------------------------------------------------------------
-# Parameter
+# NEUE FUNKTION: Universelles Brain Masking & Skull Stripping
 # -------------------------------------------------------------------------
-brain_threshold = 0.05          # relativer Schwellenwert
-t1_upper_threshold = 1200       # Intensität oberhalb -> wahrscheinlich Schädel
-flair_lower_threshold = 50      # Intensität unterhalb -> kein Gehirn
+def process_patient_brain_mask(t1_path, flair_path, patient_id, 
+                               brain_thresh=0.05, t1_upper=1200, flair_lower=50):
+    """
+    Führt den gesamten Maskierungsprozess für einen Patienten durch.
+    Gibt ein Dictionary mit allen relevanten Bildern/Masken zurück.
+    """
+    # 1. Laden
+    t1 = load_slice_corrected(t1_path, f"Pat{patient_id} T1")
+    flair = load_slice_corrected(flair_path, f"Pat{patient_id} FLAIR")
+
+    # 2. Maskierung
+    t1_m = get_brain_mask(t1, threshold=brain_thresh)
+    flair_m = get_brain_mask(flair, threshold=brain_thresh)
+    combined = t1_m | flair_m
+
+    # 3. Stripping
+    filtered = combined & (t1 < t1_upper) & (flair > flair_lower)
+    stripped_mask = binary_fill_holes(filtered)
+    
+    # 4. Resultat
+    t1_stripped = t1 * stripped_mask
+    
+    return {
+        "t1": t1,
+        "flair": flair,
+        "mask": stripped_mask,
+        "t1_stripped": t1_stripped,
+        "id": patient_id
+    }
 
 # -------------------------------------------------------------------------
-# MRI Slices laden
+# Main Execution
 # -------------------------------------------------------------------------
-T1_slice = load_slice_corrected("data/pat13_reg_T1.nii", "T1")
-FLAIR_slice = load_slice_corrected("data/pat13_reg_FLAIR.nii", "FLAIR")
+
+# Patienten-Daten verarbeiten
+pat7_results = process_patient_brain_mask("data/pat7_reg_T1.nii", "data/pat7_reg_FLAIR.nii", 7)
+pat13_results = process_patient_brain_mask("data/pat13_reg_T1.nii", "data/pat13_reg_FLAIR.nii", 13)
 
 # -------------------------------------------------------------------------
-# Brain-Masken erstellen
+# Visualisierung: Vergleich beider Patienten
 # -------------------------------------------------------------------------
-T1_mask = get_brain_mask(T1_slice, threshold=brain_threshold)
-FLAIR_mask = get_brain_mask(FLAIR_slice, threshold=brain_threshold)
+fig, axs = plt.subplots(2, 3, figsize=(20, 10))
 
-# Kombinierte Maske (OR)
-brain_mask_combined = T1_mask | FLAIR_mask
+for i, res in enumerate([pat7_results, pat13_results]):
+    # Original T1
+    axs[i, 0].imshow(res["t1"], cmap="gray", origin="lower")
+    axs[i, 0].set_title(f"Pat{res['id']}: T1 Original")
+    axs[i, 0].axis("off")
 
-# -------------------------------------------------------------------------
-# Intensity-basiertes Skull-Stripping
-# -------------------------------------------------------------------------
-brain_mask_filtered = brain_mask_combined & (T1_slice < t1_upper_threshold)
-brain_mask_filtered = brain_mask_filtered & (FLAIR_slice > flair_lower_threshold)
-brain_mask_stripped = binary_fill_holes(brain_mask_filtered)
+    # Original FLAIR
+    axs[i, 1].imshow(res["flair"], cmap="gray", origin="lower")
+    axs[i, 1].set_title(f"Pat{res['id']}: FLAIR Original")
+    axs[i, 1].axis("off")
 
-# -------------------------------------------------------------------------
-# Maskierte Gehirnbilder erstellen
-# -------------------------------------------------------------------------
-T1_brain_stripped = T1_slice * brain_mask_stripped
-FLAIR_brain_stripped = FLAIR_slice * brain_mask_stripped
+    # Brain Mask Overlay
+    axs[i, 2].imshow(res["t1_stripped"], cmap="gray", origin="lower")
+    axs[i, 2].imshow(res["mask"], cmap="Reds", alpha=0.3, origin="lower")
+    axs[i, 2].set_title(f"Pat{res['id']}: Brain Mask Overlay")
+    axs[i, 2].axis("off")
 
-# -------------------------------------------------------------------------
-# Visualisierung: Original Slices + Skull-stripped Brain
-# -------------------------------------------------------------------------
-fig, axs = plt.subplots(1, 3, figsize=(20,5))
-
-# T1 Original
-axs[0].imshow(T1_slice, cmap="gray", origin="lower")
-axs[0].set_title("T1 Original")
-axs[0].axis("off")
-
-# FLAIR Original
-axs[1].imshow(FLAIR_slice, cmap="gray", origin="lower")
-axs[1].set_title("FLAIR Original")
-axs[1].axis("off")
-
-# Brain Mask
-axs[2].imshow(T1_brain_stripped, cmap="gray", origin="lower")
-axs[2].imshow(brain_mask_stripped, cmap="Reds", alpha=0.3, origin="lower")
-axs[2].set_title("Brain Mask")
-axs[2].axis("off")
-
+plt.tight_layout()
 plt.show()
