@@ -1,3 +1,4 @@
+# Version 1: Code funktioniert für beide Patienten, nur pro Slice Segmentierung und keine Vergleiche
 import numpy as np
 import nibabel as nib
 import matplotlib.pyplot as plt
@@ -173,5 +174,3 @@ for row, res in enumerate([results_pat7, results_pat13]):
 
 plt.tight_layout(rect=[0, 0.03, 1, 0.95])
 plt.show()
-
-print("\nVerarbeitung und Visualisierung erfolgreich abgeschlossen.")
