@@ -1,7 +1,5 @@
 """
-====================================================================================================
-README: VERSION 1 - OPTIMIERTE SINGLE-SLICE PIPELINE
-====================================================================================================
+README: VERSION 2 - OPTIMIERTE SINGLE-SLICE PIPELINE
 
 BESCHREIBUNG:
 Diese Version stellt eine refactoring-optimierte Implementierung der Gehirnsegmentierung dar.
@@ -22,7 +20,8 @@ METHODIK:
 LIMITIERUNG:
 Die Beschränkung auf einen einzelnen Slice (2D) macht das Verfahren anfällig für lokales Bildrauschen.
 Eine Erweiterung auf volumetrische Analysen erfolgt in Version 2.
-====================================================================================================
+
+-Obaid Elhakim
 """
 
 import numpy as np

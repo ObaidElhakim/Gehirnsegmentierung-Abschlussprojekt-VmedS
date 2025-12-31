@@ -1,5 +1,5 @@
 """
-VERSION 2: 3D-KONSENSUS-SEGMENTIERUNG
+VERSION 3: 3D-KONSENSUS-SEGMENTIERUNG
 
 BESCHREIBUNG:
 Diese Version erweitert die Segmentierungspipeline um eine volumetrische Analyse.
@@ -19,6 +19,8 @@ LÖSUNGSANSATZ VERSION 2 (CONSENSUS VOTING):
 ERGEBNIS:
 Signifikante Reduktion von Rauschartefakten und glattere, anatomisch kohärente Segmentierungsmasken
 im Vergleich zum Single-Slice-Verfahren.
+
+-Obaid Elhakim
 """
 
 import numpy as np
