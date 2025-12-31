@@ -252,7 +252,7 @@ def segment_patient_quantile_centers(t1_path, flair_path, ir_path, patient_id,
 # ============================================================
 
 res7 = segment_patient_quantile_centers(
-    "pat7_reg_T1.nii.gz", "pat7_reg_FLAIR.nii.gz", "pat7_reg_IR.nii.gz", 
+    "data/pat7_reg_T1.nii", "data/pat7_reg_FLAIR.nii", "data/pat7_reg_IR.nii", 
     patient_id=7, 
     thr_rel=0.10,  # Maskenschwellwert relativ zu max (Schwellwertsegmentierung)
     use_center_constraint=True, 
@@ -263,7 +263,7 @@ res7 = segment_patient_quantile_centers(
 )
 
 res13 = segment_patient_quantile_centers(  # Führt die Pipeline für Patient 13 aus
-    "pat13_reg_T1.nii.gz", "pat13_reg_FLAIR.nii.gz", "pat13_reg_IR.nii.gz",  # Pfade zu den 3 Modalitäten
+    "data/pat13_reg_T1.nii", "data/pat13_reg_FLAIR.nii", "data/pat13_reg_IR.nii",  # Pfade zu den 3 Modalitäten
     patient_id=13,  # ID für Logging/Anzeige
     thr_rel=0.10,  # Maskenschwellwert relativ zu max
     use_center_constraint=True,  # Aktiviert Center-ROI-Schnitt
@@ -280,7 +280,7 @@ for r, res in enumerate([res7, res13]):  # Iteriert über beide Ergebnisse (Zeil
     axs[r, 0].axis("off")  # Achsen ausblenden (nur Bild)
 
     axs[r, 1].imshow(res["t1"], cmap="gray", origin="lower")  # Hintergrund: T1
-    axs[r, 1].imshow(res["mask"], alpha=0.35, origin="lower")  # Overlay: Maske mit Transparenz (Alpha-Blending)
+    axs[r, 1].imshow(res["mask"], cmap="Reds", alpha=0.35, origin="lower")  # Overlay: Maske mit Transparenz (Alpha-Blending)
     axs[r, 1].set_title("Brain Mask (mit Center-Constraint)")  # Titel
     axs[r, 1].axis("off")  # Achsen aus
 
