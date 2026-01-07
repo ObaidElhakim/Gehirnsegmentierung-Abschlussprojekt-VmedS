@@ -73,8 +73,8 @@ flair_lower_threshold = 50      # Intensität unterhalb -> kein Gehirn
 # -------------------------------------------------------------------------
 # MRI Slices laden
 # -------------------------------------------------------------------------
-T1_slice = load_slice_corrected("pat13_reg_T1.nii.gz", "T1")
-FLAIR_slice = load_slice_corrected("pat13_reg_FLAIR.nii.gz", "FLAIR")
+T1_slice = load_slice_corrected("data/pat13_reg_T1.nii", "T1")
+FLAIR_slice = load_slice_corrected("data/pat13_reg_FLAIR.nii", "FLAIR")
 
 # -------------------------------------------------------------------------
 # Brain-Masken erstellen
@@ -133,8 +133,8 @@ print("\nT1 und FLAIR erfolgreich verarbeitet. Skull-stripped Brain erstellt.")
 # -------------------------------------------------------------------------
 
 # Optional: drittes Bild (R1/IR) vom gleichen Patienten und gleichen Slice
-# Passe den Dateinamen an, z.B. "pat13_reg_IR.nii.gz" oder "pat13_reg_R1.nii.gz"
-R1_slice = load_slice_corrected("pat13_reg_IR.nii.gz", "IR")
+# Passe den Dateinamen an, z.B. "pat13_reg_IR.nii" oder "pat13_reg_R1.nii"
+R1_slice = load_slice_corrected("data/pat13_reg_IR.nii", "IR")
 
 # Nur die Gehirn-Pixel betrachten (brain_mask_stripped)
 brain_idx = np.where(brain_mask_stripped)

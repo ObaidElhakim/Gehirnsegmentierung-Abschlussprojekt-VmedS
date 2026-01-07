@@ -39,7 +39,7 @@
 # def get_brain_mask(slice_uint8, thr_rel=0.10):  
     
 #     """
-#      Brain-Maske auf dem 0..255 Slice.
+#       Brain-Maske auf dem 0..255 Slice.
 #     thr_rel=0.10 bedeutet: Schwelle = 10% von max (max=255 -> 25.5).
 #     """
 #     thresh = thr_rel * float(np.max(slice_uint8))  # Relativer Schwellwert: T = α·max (Skalierung nach Maximalwert)
@@ -241,7 +241,6 @@
 #         "flair": s_fl,  # FLAIR-Slice (0..255)
 #         "ir": s_ir,  # IR-Slice (0..255)
 #         "mask": mask,  # finale Gehirnmaske
-#         "seg": seg,  # Labelmap (0=BG, 1=CSF, 2=GM, 3=WM)
 #         "seg_rgb": create_rgb(seg),  # RGB-Overlay für Visualisierung
 #         "init_centers_unweighted": np.stack([c_csf, c_gm, c_wm], axis=0),  # Startzentren im ungewichteten Raum (Interpretation)
 #         "final_centers_unweighted": centers_unweighted  # Endzentren im ungewichteten Raum (Interpretation)
@@ -273,7 +272,8 @@
 #     weights=(1.2, 1.2, 0.8)  # Featuregewichtung
 # )
 
-# fig, axs = plt.subplots(2, 5, figsize=(22, 10))  # Erzeugt 2x5 Subplot-Gitter für Vergleich Pat7/Pat13
+# # Geändert auf 2x4 Grid, da das 4. Bild (diskrete Labels) entfernt wurde
+# fig, axs = plt.subplots(2, 4, figsize=(20, 10))  
 # for r, res in enumerate([res7, res13]):  # Iteriert über beide Ergebnisse (Zeilen im Plot)
 #     axs[r, 0].imshow(res["t1"], cmap="gray", origin="lower")  # Zeigt T1-Slice als Graustufenbild
 #     axs[r, 0].set_title(f"Pat{res['patient_id']} T1 (0..255), z={res['z']}")  # Titel mit Patient und Sliceindex
@@ -289,11 +289,7 @@
 #     axs[r, 2].set_title("Segmentierung (K-Means deterministisch)")  # Titel
 #     axs[r, 2].axis("off")  # Achsen aus
 
-#     axs[r, 3].imshow(res["seg"], cmap="tab10", origin="lower")  # Zeigt Labelmap mit diskreter Colormap
-#     axs[r, 3].set_title("Labels (1=CSF,2=GM,3=WM)")  # Titel erklärt Labelkodierung
-#     axs[r, 3].axis("off")  # Achsen aus
-
-#     axs[r, 4].axis("off")  # Fünftes Feld: nur Textinfos, keine Achsen
+#     axs[r, 3].axis("off")  # Viertes Feld: nur Textinfos, keine Achsen
 #     ic = res["init_centers_unweighted"]  # Startzentren (ungewichtet) für Interpretation
 #     fc = res["final_centers_unweighted"]  # Endzentren (ungewichtet) für Interpretation
 #     txt = (  # Baut Textblock für die Anzeige (Debug/Interpretation)
@@ -302,12 +298,10 @@
 #         "Final-Zentren\n"
 #         f"CSF: {fc[0]}\nGM : {fc[1]}\nWM : {fc[2]}"
 #     )
-#     axs[r, 4].text(0.0, 0.5, txt, fontsize=10, va="center")  # Schreibt Text in das Feld (Koordinaten im Achsensystem)
+#     axs[r, 3].text(0.0, 0.5, txt, fontsize=10, va="center")  # Schreibt Text in das Feld (Koordinaten im Achsensystem)
 
 # plt.tight_layout()  
-# plt.show()  
-
-
+# plt.show()
 
 import numpy as np  
 import nibabel as nib  
@@ -318,158 +312,131 @@ from scipy.ndimage import binary_fill_holes, label
 # 1) Robust 0..255 Normierung (pro 3D-Volumen, deterministisch)
 # ============================================================
 
-def robust_minmax_to_uint8(vol, p_low=1, p_high=99):  # Funktion: robuste lineare Skalierung eines Volumens auf [0,255]
+def robust_minmax_to_uint8(vol, p_low=1, p_high=99): 
     """
-    Robustes Min-Max-Scaling auf 0..255 (uint8) über ein ganzes 3D-Volumen.
-    Clip an Perzentilen reduziert Ausreißer und macht es stabiler als min/max.
+    Robustes Min-Max-Scaling auf 0..255 (uint8).
+    Wichtig für den K-Means Algorithmus, damit alle Modalitäten 
+    gleich gewichtet sind.
     """
-    v = vol.astype(np.float32)  # Konvertiert Intensitäten in float32 für stabile Gleitkomma-Arithmetik
-    lo = np.percentile(v, p_low)  # Minimum
-    hi = np.percentile(v, p_high)  # Maximum
-    if hi <= lo + 1e-6:  # Degenerationscheck: vermeidet Division durch ~0 (numerische Stabilität)
-        return np.zeros_like(v, dtype=np.uint8)  # Rückgabe: komplett 0, falls keine Dynamik vorhanden ist
+    v = vol.astype(np.float32)
+    lo = np.percentile(v, p_low)
+    hi = np.percentile(v, p_high)
+    if hi <= lo + 1e-6:
+        return np.zeros_like(v, dtype=np.uint8)
 
-    v = np.clip(v, lo, hi)  # Clipping: begrenzt Werte auf [lo,hi] (Sättigung / Robustheit gegen Ausreißer)
-    v = (v - lo) / (hi - lo)  # Lineare Normierung: affine Transformation auf [0,1]
-    return (v * 255.0).astype(np.uint8)  # Skalierung [0,1]→[0,255] und Quantisierung auf uint8 (Diskretisierung)
+    v = np.clip(v, lo, hi)
+    v = (v - lo) / (hi - lo)
+    return (v * 255.0).astype(np.uint8)
 
-def orient_slice(vol_uint8, z):  # Funktion: Slice entnehmen und Orientierung konsistent anpassen
+def orient_slice(vol, z): 
     """
-    Gleiche Orientierung wie in deinem bisherigen Code:
-    transpose + flip lr + flip ud.
+    Entnimmt einen Slice und korrigiert die Orientierung.
+    Funktioniert sowohl für Rohdaten (float) als auch für normierte Daten (uint8).
     """
-    s = np.transpose(vol_uint8[:, :, z])  # Transponiert Achsen (Matrix-Transpose) zur Achsenkorrektur
-    s = np.fliplr(s)  # Links-Rechts-Spiegelung (Index-Reversal in x-Richtung)
-    s = np.flipud(s)  # Oben-Unten-Spiegelung (Index-Reversal in y-Richtung)
-    return s  # Gibt den orientierten 2D-Slice zurück
+    s = np.transpose(vol[:, :, z])
+    s = np.fliplr(s)
+    s = np.flipud(s)
+    return s
 
 # ============================================================
 # 2) Brain Mask + optionaler Center-Constraint
 # ============================================================
 
 def get_brain_mask(slice_uint8, thr_rel=0.10):  
-    
-    """
-      Brain-Maske auf dem 0..255 Slice.
-    thr_rel=0.10 bedeutet: Schwelle = 10% von max (max=255 -> 25.5).
-    """
-    thresh = thr_rel * float(np.max(slice_uint8))  # Relativer Schwellwert: T = α·max (Skalierung nach Maximalwert)
-    m = slice_uint8 > thresh  # Binärsegmentierung: Indikatorfunktion I(x)>T (Schwellwertklassifikation)
-    m = binary_fill_holes(m)  # Lochfüllung: füllt innenliegende 0-Regionen in 1-Komponenten (Morphologische Rekonstruktion)
+    thresh = thr_rel * float(np.max(slice_uint8))
+    m = slice_uint8 > thresh
+    m = binary_fill_holes(m)
 
-    lbl, num = label(m)  # Connected-Components: vergibt Labels je zusammenhängender 1-Region (Graph/4- oder 8-Nachbarschaft)
-    if num == 0:  # Sonderfall: keine Komponente gefunden
-        return np.zeros_like(slice_uint8, dtype=bool)  # Rückgabe: leere Maske (alles False)
+    lbl, num = label(m)
+    if num == 0:
+        return np.zeros_like(slice_uint8, dtype=bool)
 
-    sizes = np.bincount(lbl.ravel())  # Histogramm der Labelhäufigkeiten (Zählen der Pixel pro Komponente)
-    sizes[0] = 0  # Label 0 = Hintergrund, wird ignoriert (damit nicht als größte Komponente gewählt)
-    return lbl == sizes.argmax()  # Größte Komponente: argmax wählt größte Fläche (Maximum-Likelihood unter Flächenprior)
+    sizes = np.bincount(lbl.ravel())
+    sizes[0] = 0
+    return lbl == sizes.argmax()
 
 def apply_center_constraint(mask, keep_frac=0.85):  
-    """
-    Schneidet die Maske auf ein zentriertes Rechteck.
-    Das entfernt häufig Nase/Augen/Frontartefakte deterministisch.
-    keep_frac=0.85 behält 85% von Breite/Höhe um die Bildmitte.
-    """
-    h, w = mask.shape  # Bildhöhe und -breite (Geometrie des 2D-Gitters)
-    ch, cw = h // 2, w // 2  # Mittelpunktkoordinate (integer floor; diskretes Koordinatensystem)
-    hh, ww = int(h * keep_frac / 2), int(w * keep_frac / 2)  # Halbe Fenstergröße: (keep_frac·Dimension)/2
+    h, w = mask.shape
+    ch, cw = h // 2, w // 2
+    hh, ww = int(h * keep_frac / 2), int(w * keep_frac / 2)
 
-    m2 = np.zeros_like(mask, dtype=bool)  # Initialisiert ROI-Maske (alles False)
-    m2[ch - hh: ch + hh, cw - ww: cw + ww] = True  # Setzt zentralen Rechteckbereich True (Ausschnitt/Windowing)
-    return mask & m2  # Logisches AND: Schnittmenge der Masken (M ∩ ROI)
+    m2 = np.zeros_like(mask, dtype=bool)
+    m2[ch - hh: ch + hh, cw - ww: cw + ww] = True
+    return mask & m2
 
 # ============================================================
-# 3) K-Means (deterministisch) mit festen/datenbasierten Startzentren
+# 3) K-Means (deterministisch)
 # ============================================================
 
-def kmeans_fixed_init(X, init_centers, max_iter=40):  # K-Means: Minimiert Summe quadratischer Abstände zu Zentren
-    """
-    K-Means auf X (N, D) mit festen Zentren (K, D).
-    Deterministisch, kein Zufall. Wenn ein Cluster leer wird, bleibt
-    sein Zentrum unverändert (stabiler als zufälliges reseeding).
-    """
-    centers = init_centers.astype(np.float32).copy()  # Startzentren (K,D) als float32, Kopie für Updates
-    K = centers.shape[0]  # Anzahl Cluster K (hier typischerweise 3 für CSF/GM/WM)
+def kmeans_fixed_init(X, init_centers, max_iter=40):
+    centers = init_centers.astype(np.float32).copy()
+    K = centers.shape[0]
 
-    labels = None  # Platzhalter für Zuordnung jedes Punkts zu einem Cluster
-    for _ in range(max_iter):  # Iterationen: Lloyd-Algorithmus (wechselnd Assignment/Update)
-        dist = np.linalg.norm(X[:, None, :] - centers[None, :, :], axis=2)  # Euklidische Distanzmatrix ||x_i-c_k|| (L2-Norm)
-        new_labels = np.argmin(dist, axis=1)  # Assignment: wähle k mit minimaler Distanz (Nearest-Center-Voronoi)
+    labels = None
+    for _ in range(max_iter):
+        dist = np.linalg.norm(X[:, None, :] - centers[None, :, :], axis=2)
+        new_labels = np.argmin(dist, axis=1)
 
-        if labels is not None and np.array_equal(new_labels, labels):  # Konvergenz: keine Labeländerung → Fixpunkt
-            break  # Abbruch, da weiterer Durchlauf keine Änderung bringt
-        labels = new_labels  # Aktualisiert aktuelle Clusterzuordnung
+        if labels is not None and np.array_equal(new_labels, labels):
+            break
+        labels = new_labels
 
-        for k in range(K):  # Update-Schritt: Zentren neu berechnen
-            pts = X[labels == k]  # Alle Punkte im Cluster k (Indexfilter)
-            if pts.shape[0] > 0:  # Nur wenn Cluster nicht leer ist
-                centers[k] = pts.mean(axis=0)  # Mittelwert = Minimierer der SSE im Cluster (Least Squares / L2-Optimalität)
-            # else: Zentrum bleibt unverändert  # Leeres Cluster: kein Update, damit deterministisch und stabil
+        for k in range(K):
+            pts = X[labels == k]
+            if pts.shape[0] > 0:
+                centers[k] = pts.mean(axis=0)
 
-    return labels, centers  # Rückgabe: Labels pro Punkt und finale Zentren
+    return labels, centers
 
-def labels_to_segmap(labels, idx, shape):  # Baut aus Punktlabels wieder ein 2D-Labelbild
-    seg = np.zeros(shape, dtype=np.uint8)  # Initialisiert Labelmap: 0 = Hintergrund
-    seg[idx[0], idx[1]] = (labels.astype(np.uint8) + 1)  # Schreibt 1..3 in die Maskenpixel (Labelverschiebung)
-    return seg  # Gibt 2D-Segmentierungsmap zurück
+def labels_to_segmap(labels, idx, shape):
+    seg = np.zeros(shape, dtype=np.uint8)
+    seg[idx[0], idx[1]] = (labels.astype(np.uint8) + 1)
+    return seg
 
-def create_rgb(seg):  # Umwandlung Labelmap → RGB-Overlay (Farbcodierung)
-    rgb = np.zeros(seg.shape + (3,), dtype=np.float32)  # RGB-Array (H,W,3) initial 0 (schwarz)
-    rgb[seg == 1, 2] = 1.0  # CSF: blau (B-Kanal auf 1)
-    rgb[seg == 2, 1] = 1.0  # GM: grün (G-Kanal auf 1)
-    rgb[seg == 3, 0] = 1.0  # WM: rot (R-Kanal auf 1)
-    return rgb  # Gibt farbiges Overlay zurück
+def create_rgb(seg):
+    rgb = np.zeros(seg.shape + (3,), dtype=np.float32)
+    rgb[seg == 1, 2] = 1.0  # CSF: blau
+    rgb[seg == 2, 1] = 1.0  # GM: grün
+    rgb[seg == 3, 0] = 1.0  # WM: rot
+    return rgb
 
 # ============================================================
-# 4) Neue Startzentren: deterministisch aus Quantilen (pro Patient passend)
+# 4) Neue Startzentren: deterministisch aus Quantilen
 # ============================================================
 
 def compute_centers_from_quantiles(s_t1, s_fl, s_ir, mask,
                                   q_csf=0.15, q_gm=0.55, q_wm=0.90,
-                                  band=10):  # Startzentren über Quantile (robuste Lageparameter)
-    """
-    Deterministische Startzentren aus Quantilen (T1) im Gehirnmaskenbereich.
+                                  band=10):
+    t = s_t1[mask].astype(np.float32)
+    f = s_fl[mask].astype(np.float32)
+    r = s_ir[mask].astype(np.float32)
 
-    Idee:
-      - CSF: niedriges T1-Quantil
-      - GM : mittleres T1-Quantil
-      - WM : hohes T1-Quantil
-    FLAIR/IR-Zentrum wird als Median in einem Intensitätsband um das jeweilige
-    T1-Quantil bestimmt, damit Zentren wirklich 3D (T1/FLAIR/IR) sind.
-    """
-    t = s_t1[mask].astype(np.float32)  # T1-Werte im Gehirn: Stichprobe aus Maskenbereich
-    f = s_fl[mask].astype(np.float32)  # FLAIR-Werte im Gehirn: gleiche Pixelpositionen
-    r = s_ir[mask].astype(np.float32)  # IR-Werte im Gehirn: gleiche Pixelpositionen
-
-    if t.size < 50:  # Sicherheitsfallback: zu wenig Punkte für robuste Statistik
-        # sehr kleine Maske -> fallback: fixe Zentren
+    if t.size < 50:
         return (
-            np.array([20,  80,  80], dtype=np.float32),  # CSF: niedrige Intensitäten
-            np.array([110, 110, 110], dtype=np.float32),  # GM: mittlere Intensitäten
-            np.array([235, 170, 170], dtype=np.float32)  # WM: hohe Intensitäten
+            np.array([20,  80,  80], dtype=np.float32),
+            np.array([110, 110, 110], dtype=np.float32),
+            np.array([235, 170, 170], dtype=np.float32)
         )
 
-    t_csf = float(np.quantile(t, q_csf))  # Quantil als robuster „niedriger“ Lagewert (Ordnungstatistik)
-    t_gm  = float(np.quantile(t, q_gm))  # Quantil als „mittlerer“ Lagewert (robust gegen Ausreißer)
-    t_wm  = float(np.quantile(t, q_wm))  # Quantil als „hoher“ Lagewert (Ordnungstatistik)
+    t_csf = float(np.quantile(t, q_csf))
+    t_gm  = float(np.quantile(t, q_gm))
+    t_wm  = float(np.quantile(t, q_wm))
 
-    # Bänder definieren (auf T1)
-    csf_band = t <= (t_csf + band)  # Bereich „nahe CSF“: T1 unterhalb (t_csf + band)
-    gm_band  = (t >= (t_gm - band)) & (t <= (t_gm + band))  # Bereich „nahe GM“: symmetrisches Band um t_gm
-    wm_band  = t >= (t_wm - band)  # Bereich „nahe WM“: T1 oberhalb (t_wm - band)
+    csf_band = t <= (t_csf + band)
+    gm_band  = (t >= (t_gm - band)) & (t <= (t_gm + band))
+    wm_band  = t >= (t_wm - band)
 
-    f_med = float(np.median(f))  # Median FLAIR als robuster Zentralwert (L1-Optimalität)
-    r_med = float(np.median(r))  # Median IR als robuster Zentralwert (L1-Optimalität)
+    f_med = float(np.median(f))
+    r_med = float(np.median(r))
 
-    def band_median(arr, band_mask, fallback):  # Hilfsfunktion: Median in Band, sonst Fallback
-        return float(np.median(arr[band_mask])) if np.any(band_mask) else float(fallback)  # Median = robust, Ausreißer-resistent
+    def band_median(arr, band_mask, fallback):
+        return float(np.median(arr[band_mask])) if np.any(band_mask) else float(fallback)
 
-    c_csf = np.array([t_csf, band_median(f, csf_band, f_med), band_median(r, csf_band, r_med)], dtype=np.float32)  # CSF-Zentrum (T1,FL,IR)
-    c_gm  = np.array([t_gm,  band_median(f, gm_band,  f_med), band_median(r, gm_band,  r_med)], dtype=np.float32)  # GM-Zentrum
-    c_wm  = np.array([t_wm,  band_median(f, wm_band,  f_med), band_median(r, wm_band,  r_med)], dtype=np.float32)  # WM-Zentrum
+    c_csf = np.array([t_csf, band_median(f, csf_band, f_med), band_median(r, csf_band, r_med)], dtype=np.float32)
+    c_gm  = np.array([t_gm,  band_median(f, gm_band,  f_med), band_median(r, gm_band,  r_med)], dtype=np.float32)
+    c_wm  = np.array([t_wm,  band_median(f, wm_band,  f_med), band_median(r, wm_band,  r_med)], dtype=np.float32)
 
-    return c_csf, c_gm, c_wm  # Rückgabe der drei Startzentren (ungewichtet)
+    return c_csf, c_gm, c_wm
 
 # ============================================================
 # 5) Pipeline pro Patient
@@ -483,133 +450,135 @@ def segment_patient_quantile_centers(t1_path, flair_path, ir_path, patient_id,
                                     keep_frac=0.85,
                                     q_csf=0.15, q_gm=0.55, q_wm=0.90,
                                     band=10,
-                                    weights=(1.2, 1.2, 0.8)):  # Hauptpipeline: Laden → Normieren → Maske → Features → K-Means
-    """
-    Ablauf:
-      - 3D Volumen je Modalität robust auf 0..255 normieren
-      - Slice wählen
-      - Brain Mask auf T1 anwenden (+ optional Center-Constraint)
-      - Features (T1, FLAIR, IR) aus Maske extrahieren
-      - K-Means deterministisch mit datenbasierten Startzentren (Quantile)
-    """
+                                    weights=(1.2, 1.2, 0.8)):
+    
+    print(f"\n=== Patient {patient_id} ===")
 
-    print(f"\n=== Patient {patient_id} ===")  # Logging: zeigt, welcher Patient verarbeitet wird
+    # 1. Laden der RAW Daten (float)
+    t1_raw = nib.load(t1_path).get_fdata()
+    fl_raw = nib.load(flair_path).get_fdata()
+    ir_raw = nib.load(ir_path).get_fdata()
 
-    t1 = nib.load(t1_path).get_fdata()  # Lädt T1-Volumen als float (Voxelintensitäten)
-    fl = nib.load(flair_path).get_fdata()  # Lädt FLAIR-Volumen als float
-    ir = nib.load(ir_path).get_fdata()  # Lädt IR-Volumen als float
+    # 2. Erstellen der NORMALISIERTEN Daten (für K-Means Algorithmus)
+    # Dies ist notwendig für den Algorithmus, aber schlecht für die Visualisierung von IR
+    t1_8 = robust_minmax_to_uint8(t1_raw, p_low, p_high)
+    fl_8 = robust_minmax_to_uint8(fl_raw, p_low, p_high)
+    ir_8 = robust_minmax_to_uint8(ir_raw, p_low, p_high)
 
-    # 0..255 Normierung über das gesamte Volumen (robust)
-    t1_8 = robust_minmax_to_uint8(t1, p_low, p_high)  # T1: robuste affine Skalierung und Quantisierung auf uint8
-    fl_8 = robust_minmax_to_uint8(fl, p_low, p_high)  # FLAIR: gleiche Skalierungsmethode
-    ir_8 = robust_minmax_to_uint8(ir, p_low, p_high)  # IR: gleiche Skalierungsmethode
-
-    depth = t1_8.shape[2]  # Anzahl Slices in z-Richtung (3. Dimension)
-    if z_mode == "mid":  # Fall: mittlerer Slice
-        z = depth // 2  # Index des mittleren Slices (Integer-Division)
+    depth = t1_8.shape[2]
+    if z_mode == "mid":
+        z = depth // 2
     else:
-        z = int(depth * float(z_mode))  # Alternative: relativer Sliceanteil (z_mode in [0,1])
+        z = int(depth * float(z_mode))
 
-    s_t1 = orient_slice(t1_8, z)  # Entnimmt T1-Slice z und korrigiert Orientierung
-    s_fl = orient_slice(fl_8, z)  # Entnimmt FLAIR-Slice z und korrigiert Orientierung
-    s_ir = orient_slice(ir_8, z)  # Entnimmt IR-Slice z und korrigiert Orientierung
+    # 3. Slices extrahieren:
+    # A) Die NORMALISIERTEN Slices (für Berechnung/Maske)
+    s_t1_norm = orient_slice(t1_8, z)
+    s_fl_norm = orient_slice(fl_8, z)
+    s_ir_norm = orient_slice(ir_8, z)
+    
+    # B) Die RAW Slices (für Visualisierung -> besserer Kontrast!)
+    s_t1_viz = orient_slice(t1_raw, z)
+    s_fl_viz = orient_slice(fl_raw, z)
+    s_ir_viz = orient_slice(ir_raw, z)
 
-    # Maske
-    mask = get_brain_mask(s_t1, thr_rel=thr_rel)  # Skull-Stripping grob über Schwellwert + größte Komponente
-    if use_center_constraint:  # Option: zusätzliche geometrische Einschränkung
-        mask = apply_center_constraint(mask, keep_frac=keep_frac)  # ROI-Schnitt: entfernt häufig frontale Nicht-Gehirn-Anteile
+    # Maske (basiert auf T1 normalisiert)
+    mask = get_brain_mask(s_t1_norm, thr_rel=thr_rel)
+    if use_center_constraint:
+        mask = apply_center_constraint(mask, keep_frac=keep_frac)
 
-    idx = np.where(mask)  # Indexliste aller True-Pixel (Koordinaten der Maskenpunkte)
-    if idx[0].size == 0:  # Sonderfall: keine Pixel in Maske
-        raise RuntimeError("Maske ist leer. thr_rel reduzieren oder keep_frac erhöhen.")  # Harte Fehlerausgabe zur Diagnose
+    idx = np.where(mask)
+    if idx[0].size == 0:
+        raise RuntimeError("Maske ist leer. thr_rel reduzieren oder keep_frac erhöhen.")
 
-    # Features
-    X = np.stack([s_t1[idx], s_fl[idx], s_ir[idx]], axis=1).astype(np.float32)  # Featurevektor je Pixel: (T1,FLAIR,IR)
+    # Features (basieren auf NORMALISIERTEN Daten)
+    X = np.stack([s_t1_norm[idx], s_fl_norm[idx], s_ir_norm[idx]], axis=1).astype(np.float32)
 
-    w = np.array(weights, dtype=np.float32)  # Gewichtungsvektor (Feature-Skalierung → anisotrope Distanzmetrik)
-    Xw = X * w  # Gewichtet: entspricht einer Diagonalmetrik in L2 (||W(x-c)||)
+    w = np.array(weights, dtype=np.float32)
+    Xw = X * w
 
-    # Startzentren deterministisch aus Quantilen
-    c_csf, c_gm, c_wm = compute_centers_from_quantiles(  # Schätzt initiale Zentren robust aus der Datenverteilung
-        s_t1, s_fl, s_ir, mask,  # Übergibt die Modalitäten und die Gehirnmaske
-        q_csf=q_csf, q_gm=q_gm, q_wm=q_wm,  # Quantile definieren low/mid/high
-        band=band  # Bandbreite um Quantile zur Medianbestimmung in FLAIR/IR
+    # Startzentren
+    c_csf, c_gm, c_wm = compute_centers_from_quantiles(
+        s_t1_norm, s_fl_norm, s_ir_norm, mask,
+        q_csf=q_csf, q_gm=q_gm, q_wm=q_wm,
+        band=band
     )
 
-    init_centers = np.stack([c_csf * w, c_gm * w, c_wm * w], axis=0)  # Zentren in den gewichteten Raum abbilden (K,D)
+    init_centers = np.stack([c_csf * w, c_gm * w, c_wm * w], axis=0)
+    labels, centers_w = kmeans_fixed_init(Xw, init_centers, max_iter=40)
+    seg = labels_to_segmap(labels, idx, s_t1_norm.shape)
+    centers_unweighted = centers_w / (w + 1e-12)
 
-    labels, centers_w = kmeans_fixed_init(Xw, init_centers, max_iter=40)  # Lloyd-K-Means: Assignment/Update bis Konvergenz
-
-    seg = labels_to_segmap(labels, idx, s_t1.shape)  # Schreibt Punktlabels zurück in 2D-Bildkoordinaten (Segmentkarte)
-
-    # Zur Interpretation ungewichtet zurück
-    centers_unweighted = centers_w / (w + 1e-12)  # Rücktransformation aus Gewichtung (inverse Skalierung; eps gegen /0)
-
-    return {  # Sammeln aller Ergebnisse in einem Dictionary (strukturiertes Ergebnisobjekt)
-        "patient_id": patient_id,  # Patient-ID (für Anzeige/Debug)
-        "z": z,  # verwendeter Slice-Index
-        "t1": s_t1,  # T1-Slice (0..255)
-        "flair": s_fl,  # FLAIR-Slice (0..255)
-        "ir": s_ir,  # IR-Slice (0..255)
-        "mask": mask,  # finale Gehirnmaske
-        "seg_rgb": create_rgb(seg),  # RGB-Overlay für Visualisierung
-        "init_centers_unweighted": np.stack([c_csf, c_gm, c_wm], axis=0),  # Startzentren im ungewichteten Raum (Interpretation)
-        "final_centers_unweighted": centers_unweighted  # Endzentren im ungewichteten Raum (Interpretation)
+    return {
+        "patient_id": patient_id,
+        "z": z,
+        "t1": s_t1_viz,      # RAW für Visualisierung
+        "flair": s_fl_viz,   # RAW für Visualisierung
+        "ir": s_ir_viz,      # RAW für Visualisierung
+        "mask": mask,
+        "seg_rgb": create_rgb(seg),
+        "init_centers_unweighted": np.stack([c_csf, c_gm, c_wm], axis=0),
+        "final_centers_unweighted": centers_unweighted
     }
 
 # ============================================================
-# 6) Demo: Patient 7 und 13 + Visualisierung
+# 6) Execution & 2x6 Grid Visualisierung
 # ============================================================
 
 res7 = segment_patient_quantile_centers(
     "data/pat7_reg_T1.nii", "data/pat7_reg_FLAIR.nii", "data/pat7_reg_IR.nii", 
-    patient_id=7, 
-    thr_rel=0.10,  # Maskenschwellwert relativ zu max (Schwellwertsegmentierung)
-    use_center_constraint=True, 
-    keep_frac=0.85,  # Anteil des Bildes, der um die Mitte behalten wird
-    q_csf=0.15, q_gm=0.55, q_wm=0.90,  # Quantile für CSF/GM/WM (robuste Lageparameter)
-    band=10,  # Bandbreite um Quantile zur Medianbestimmung in FLAIR/IR
-    weights=(1.2, 1.2, 0.8)  # Featuregewichtung (Distanzmetrik: T1/FLAIR stärker als IR)
+    patient_id=7, weights=(1.2, 1.2, 0.8)
 )
 
-res13 = segment_patient_quantile_centers(  # Führt die Pipeline für Patient 13 aus
-    "data/pat13_reg_T1.nii", "data/pat13_reg_FLAIR.nii", "data/pat13_reg_IR.nii",  # Pfade zu den 3 Modalitäten
-    patient_id=13,  # ID für Logging/Anzeige
-    thr_rel=0.10,  # Maskenschwellwert relativ zu max
-    use_center_constraint=True,  # Aktiviert Center-ROI-Schnitt
-    keep_frac=0.85,  # Anteil des Bildes, der um die Mitte behalten wird
-    q_csf=0.15, q_gm=0.55, q_wm=0.90,  # Quantile für CSF/GM/WM
-    band=10,  # Bandbreite
-    weights=(1.2, 1.2, 0.8)  # Featuregewichtung
+res13 = segment_patient_quantile_centers(
+    "data/pat13_reg_T1.nii", "data/pat13_reg_FLAIR.nii", "data/pat13_reg_IR.nii", 
+    patient_id=13, weights=(1.2, 1.2, 0.8)
 )
 
-# Geändert auf 2x4 Grid, da das 4. Bild (diskrete Labels) entfernt wurde
-fig, axs = plt.subplots(2, 4, figsize=(20, 10))  
-for r, res in enumerate([res7, res13]):  # Iteriert über beide Ergebnisse (Zeilen im Plot)
-    axs[r, 0].imshow(res["t1"], cmap="gray", origin="lower")  # Zeigt T1-Slice als Graustufenbild
-    axs[r, 0].set_title(f"Pat{res['patient_id']} T1 (0..255), z={res['z']}")  # Titel mit Patient und Sliceindex
-    axs[r, 0].axis("off")  # Achsen ausblenden (nur Bild)
+# 2x6 Grid: T1, FLAIR, IR, Mask, Seg, Stats
+fig, axs = plt.subplots(2, 6, figsize=(30, 10))  
+for r, res in enumerate([res7, res13]):
+    
+    # 1. T1 Original (Raw)
+    axs[r, 0].imshow(res["t1"], cmap="gray", origin="lower")
+    axs[r, 0].set_title(f"Pat{res['patient_id']} T1")
+    axs[r, 0].axis("off")
 
-    axs[r, 1].imshow(res["t1"], cmap="gray", origin="lower")  # Hintergrund: T1
-    axs[r, 1].imshow(res["mask"], cmap="Reds", alpha=0.35, origin="lower")  # Overlay: Maske mit Transparenz (Alpha-Blending)
-    axs[r, 1].set_title("Brain Mask (mit Center-Constraint)")  # Titel
-    axs[r, 1].axis("off")  # Achsen aus
+    # 2. FLAIR Original (Raw)
+    axs[r, 1].imshow(res["flair"], cmap="gray", origin="lower")
+    axs[r, 1].set_title(f"Pat{res['patient_id']} FLAIR")
+    axs[r, 1].axis("off")
 
-    axs[r, 2].imshow(res["t1"], cmap="gray", origin="lower")  # Hintergrund: T1
-    axs[r, 2].imshow(res["seg_rgb"], alpha=0.55, origin="lower")  # Overlay: farbige Segmentierung (Alpha-Blending)
-    axs[r, 2].set_title("Segmentierung (K-Means deterministisch)")  # Titel
-    axs[r, 2].axis("off")  # Achsen aus
+    # 3. IR Original (Raw)
+    axs[r, 2].imshow(res["ir"], cmap="gray", origin="lower")
+    axs[r, 2].set_title(f"Pat{res['patient_id']} IR")
+    axs[r, 2].axis("off")
 
-    axs[r, 3].axis("off")  # Viertes Feld: nur Textinfos, keine Achsen
-    ic = res["init_centers_unweighted"]  # Startzentren (ungewichtet) für Interpretation
-    fc = res["final_centers_unweighted"]  # Endzentren (ungewichtet) für Interpretation
-    txt = (  # Baut Textblock für die Anzeige (Debug/Interpretation)
-        "Init-Zentren (T1,FL,IR)\n"
-        f"CSF: {ic[0]}\nGM : {ic[1]}\nWM : {ic[2]}\n\n"
+    # 4. Brain Mask Overlay
+    axs[r, 3].imshow(res["t1"], cmap="gray", origin="lower")
+    axs[r, 3].imshow(res["mask"], cmap="Reds", alpha=0.35, origin="lower")
+    axs[r, 3].set_title("Brain Mask")
+    axs[r, 3].axis("off")
+
+    # 5. Segmentierung
+    axs[r, 4].imshow(res["t1"], cmap="gray", origin="lower")
+    axs[r, 4].imshow(res["seg_rgb"], alpha=0.55, origin="lower")
+    axs[r, 4].set_title("Segmentation")
+    axs[r, 4].axis("off")
+
+    # 6. Text (FIXED)
+    axs[r, 5].axis("off")
+    ic = res["init_centers_unweighted"]
+    fc = res["final_centers_unweighted"]
+    
+    # We round the arrays to 1 decimal place so they look clean but don't crash
+    txt = (
+        "Init-Zentren\n"
+        f"CSF: {np.round(ic[0], 1)}\nGM : {np.round(ic[1], 1)}\nWM : {np.round(ic[2], 1)}\n\n"
         "Final-Zentren\n"
-        f"CSF: {fc[0]}\nGM : {fc[1]}\nWM : {fc[2]}"
+        f"CSF: {np.round(fc[0], 1)}\nGM : {np.round(fc[1], 1)}\nWM : {np.round(fc[2], 1)}"
     )
-    axs[r, 3].text(0.0, 0.5, txt, fontsize=10, va="center")  # Schreibt Text in das Feld (Koordinaten im Achsensystem)
+    axs[r, 5].text(0.0, 0.5, txt, fontsize=10, va="center")
 
 plt.tight_layout()  
 plt.show()
