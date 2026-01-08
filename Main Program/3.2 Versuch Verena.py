@@ -232,4 +232,3 @@ for row, res in enumerate([results_pat7, results_pat13]):
 
 plt.tight_layout(rect=[0, 0.03, 1, 0.95])
 plt.show()
-
